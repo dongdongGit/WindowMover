@@ -6,6 +6,7 @@ using System.Threading;
 using System.Windows.Forms;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Windows.Automation;
 
 // 显式声明支持 Windows 7+，消除跨平台警告
 [assembly: System.Runtime.Versioning.SupportedOSPlatform("windows7.0")]
@@ -143,42 +144,70 @@ namespace WindowMover
 
                         long hitValue = (result != IntPtr.Zero) ? hitResultPtr.ToInt64() : 0;
                         bool shouldMove = false;
+                        string processName = GetProcessName(hwnd);
 
-                        // 1. 标准判定：系统明确说是标题栏 (HTCAPTION)
-                        //    这是最稳妥的。Explorer 的空白处、Notepad、Chrome 空白处都会触发这里。
-                        if (hitValue == HTCAPTION)
-                        {
-                            shouldMove = true;
-                        }
-                        // 2. 特殊判定：只有 VS Code 和 任务管理器 走这里
-                        else 
-                        {
-                            string processName = GetProcessName(hwnd);
+                        // 调试日志
+                        System.Diagnostics.Debug.WriteLine($"[WindowMover] Process: {processName}, HitTest: {hitValue}, Point: ({hookStruct.pt.x}, {hookStruct.pt.y})");
 
-                            // ==============================================================
-                            // 修正逻辑：
-                            // 1. 移除了 explorer：让资源管理器走标准判定。
-                            //    - 点标签页 -> 是内容区 -> 不移动 -> 触发关闭标签
-                            //    - 点空白处 -> 是标题栏 -> 移动 -> 触发移动
-                            // 2. 添加 taskmgr (任务管理器)：因为它是 XAML 窗口，经常不认标题栏
-                            // ==============================================================
-                            if (processName == "code" || processName == "taskmgr") 
+                        // ==============================================================
+                        // 资源管理器特殊处理：使用 UI Automation 精确检测标签页
+                        // ==============================================================
+                        if (processName == "explorer")
+                        {
+                            // 使用 UI Automation 检测是否在标签页上
+                            bool isOverTab = IsOverExplorerTab(hookStruct.pt);
+                            
+                            System.Diagnostics.Debug.WriteLine($"[WindowMover] Explorer UI Automation check - IsOverTab: {isOverTab}");
+                            
+                            // 如果在标签页上，不移动（让系统处理关闭标签）
+                            if (isOverTab)
+                            {
+                                shouldMove = false;
+                            }
+                            // 否则检查是否在标题栏区域（使用几何判定）
+                            else
                             {
                                 RECT winRect;
                                 GetWindowRect(hwnd, out winRect);
-                                int titleBarHeight = 45; // 允许整个顶部区域
+                                int titleBarHeight = 45;
                                 
                                 bool isInTopArea = (hookStruct.pt.y >= winRect.Top) && (hookStruct.pt.y <= winRect.Top + titleBarHeight);
                                 bool isInsideWidth = (hookStruct.pt.x >= winRect.Left) && (hookStruct.pt.x <= winRect.Right);
-
-                                if (isInTopArea && isInsideWidth) shouldMove = true;
+                                
+                                System.Diagnostics.Debug.WriteLine($"[WindowMover] Explorer geometry check - IsInTopArea: {isInTopArea}, IsInsideWidth: {isInsideWidth}");
+                                
+                                if (isInTopArea && isInsideWidth)
+                                {
+                                    shouldMove = true;
+                                }
                             }
+                        }
+                        // ==============================================================
+                        // 其他窗口：标准判定
+                        // ==============================================================
+                        else if (hitValue == HTCAPTION)
+                        {
+                            shouldMove = true;
+                        }
+                        // ==============================================================
+                        // 特殊判定：VS Code 和任务管理器（不认标题栏的应用）
+                        // ==============================================================
+                        else if (processName == "code" || processName == "taskmgr")
+                        {
+                            RECT winRect;
+                            GetWindowRect(hwnd, out winRect);
+                            int titleBarHeight = 45;
+                            
+                            bool isInTopArea = (hookStruct.pt.y >= winRect.Top) && (hookStruct.pt.y <= winRect.Top + titleBarHeight);
+                            bool isInsideWidth = (hookStruct.pt.x >= winRect.Left) && (hookStruct.pt.x <= winRect.Right);
+
+                            if (isInTopArea && isInsideWidth) shouldMove = true;
                         }
 
                         if (shouldMove)
                         {
                             MoveWindowToNextMonitor(hwnd);
-                            return (IntPtr)1; 
+                            return (IntPtr)1;
                         }
                     }
                 }
@@ -201,6 +230,46 @@ namespace WindowMover
             catch
             {
                 return "";
+            }
+        }
+
+        // 使用 UI Automation 检测是否在资源管理器标签页上
+        private static bool IsOverExplorerTab(Point point)
+        {
+            try
+            {
+                // 将 Point 转换为 System.Windows.Point
+                var automationPoint = new System.Windows.Point(point.x, point.y);
+                
+                // 获取指定位置的 UI Automation 元素
+                var element = AutomationElement.FromPoint(automationPoint);
+                if (element == null) return false;
+                
+                // 获取元素的控件类型
+                var controlType = element.Current.ControlType;
+                
+                // 获取元素的类名
+                var className = element.Current.ClassName;
+                
+                System.Diagnostics.Debug.WriteLine($"[WindowMover] UI Automation - ControlType: {controlType.ProgrammaticName}, ClassName: {className}");
+                
+                // 检查是否是标签页相关控件
+                // TabItem: 单个标签页
+                // Tab: 标签页容器
+                // 或者类名包含 "Tab"
+                if (controlType == ControlType.TabItem ||
+                    controlType == ControlType.Tab ||
+                    (className != null && className.Contains("Tab")))
+                {
+                    return true;
+                }
+                
+                return false;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[WindowMover] UI Automation error: {ex.Message}");
+                return false;
             }
         }
 
