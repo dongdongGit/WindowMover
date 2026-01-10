@@ -10,6 +10,8 @@
 
     <AssemblyName>WindowMover</AssemblyName>
 
+    <ApplicationIcon>appicon.ico</ApplicationIcon>
+
     <SupportedOSPlatformVersion>7.0</SupportedOSPlatformVersion>
 
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
