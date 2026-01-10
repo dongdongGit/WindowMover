@@ -42,20 +42,20 @@ jobs:
       - name: Build project
         run: dotnet build --configuration Release --no-restore
 
-      # 发布 win-x64
+      # 发布 win-x64 (依赖框架，文件更小)
       - name: Publish win-x64
         run: |
-          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o publish/win-x64
+          dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-x64
 
-      # 发布 win-x86
+      # 发布 win-x86 (依赖框架，文件更小)
       - name: Publish win-x86
         run: |
-          dotnet publish -c Release -r win-x86 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o publish/win-x86
+          dotnet publish -c Release -r win-x86 --self-contained false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-x86
 
-      # 发布 win-arm64
+      # 发布 win-arm64 (依赖框架，文件更小)
       - name: Publish win-arm64
         run: |
-          dotnet publish -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o publish/win-arm64
+          dotnet publish -c Release -r win-arm64 --self-contained false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-arm64
 
       # 打包 (优化：文件名带上版本号，且只打包 exe，排除 pdb 调试文件)
       - name: Create ZIP archives
@@ -85,7 +85,8 @@ jobs:
             
             ### 使用方法
             1. 下载并解压
-            2. 运行 `WindowMover.exe` (无需安装运行时)
+            2. 安装 [.NET 8.0 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) (如已安装可跳过)
+            3. 运行 `WindowMover.exe`
             3. 右键托盘图标可设置开机自启
             
             ---
