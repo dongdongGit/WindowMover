@@ -7,6 +7,12 @@ using System.Windows.Forms;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
+// =======================================================================
+// 优雅修复 CA1416 警告的核心代码
+// 显式声明本程序仅支持 Windows 7 及以上版本，编译器看到这就不会再报跨平台警告了
+// =======================================================================
+[assembly: System.Runtime.Versioning.SupportedOSPlatform("windows7.0")]
+
 namespace WindowMover
 {
     class Program

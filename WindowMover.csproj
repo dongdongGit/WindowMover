@@ -9,6 +9,8 @@
 
     <AssemblyName>WindowMover</AssemblyName>
 
+    <SupportedOSPlatformVersion>7.0</SupportedOSPlatformVersion>
+
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
   </PropertyGroup>
