@@ -7,10 +7,7 @@ using System.Windows.Forms;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
-// =======================================================================
-// 优雅修复 CA1416 警告的核心代码
-// 显式声明本程序仅支持 Windows 7 及以上版本，编译器看到这就不会再报跨平台警告了
-// =======================================================================
+// 显式声明支持 Windows 7+，消除跨平台警告
 [assembly: System.Runtime.Versioning.SupportedOSPlatform("windows7.0")]
 
 namespace WindowMover
@@ -29,7 +26,6 @@ namespace WindowMover
         private const uint SWP_SHOWWINDOW = 0x0040;
         private const uint SWP_NOCOPYBITS = 0x0100;
         private const uint SWP_FRAMECHANGED = 0x0020;
-        private const uint SWP_NOACTIVATE = 0x0010; 
 
         // Z-Order 常量
         private static readonly IntPtr HWND_TOP = IntPtr.Zero;
@@ -38,12 +34,9 @@ namespace WindowMover
         private static LowLevelMouseProc hookProc;
         private static bool isHookEnabled = true;
 
-        // DPI 感知
-        [DllImport("user32.dll")]
-        private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+        [DllImport("user32.dll")] private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
         private static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = (IntPtr)(-4);
         
-        // 窗口控制 API
         [DllImport("user32.dll")] private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
         [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hhk);
         [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
@@ -60,17 +53,16 @@ namespace WindowMover
         private const uint SMTO_ABORTIFHUNG = 0x0002;
         [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string lpModuleName);
 
-        // ============================================
-        // 强力置顶所需的 API (Focus Stealing Hacks)
-        // ============================================
+        [DllImport("user32.dll", SetLastError = true)] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        // 强力置顶相关
         [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr ProcessId);
         [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
         [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr hWnd);
-        [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd); // 检查是否最小化
+        [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
         [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
-
         [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr hWnd);
         [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
         private const int SW_RESTORE = 9;
@@ -149,23 +141,38 @@ namespace WindowMover
                         IntPtr lParamCoords = (IntPtr)((hookStruct.pt.y << 16) | (hookStruct.pt.x & 0xFFFF));
                         IntPtr result = SendMessageTimeout(hwnd, WM_NCHITTEST, IntPtr.Zero, lParamCoords, SMTO_ABORTIFHUNG, 200, out hitResultPtr);
 
-                        bool shouldMove = false;
                         long hitValue = (result != IntPtr.Zero) ? hitResultPtr.ToInt64() : 0;
+                        bool shouldMove = false;
 
+                        // 1. 标准判定：系统明确说是标题栏 (HTCAPTION)
+                        //    这是最稳妥的。Explorer 的空白处、Notepad、Chrome 空白处都会触发这里。
                         if (hitValue == HTCAPTION)
                         {
                             shouldMove = true;
                         }
+                        // 2. 特殊判定：只有 VS Code 和 任务管理器 走这里
                         else 
                         {
-                            // VS Code/Chrome 几何判定
-                            RECT winRect;
-                            GetWindowRect(hwnd, out winRect);
-                            int titleBarHeight = 45; 
-                            bool isInTopArea = (hookStruct.pt.y >= winRect.Top) && (hookStruct.pt.y <= winRect.Top + titleBarHeight);
-                            bool isInsideWidth = (hookStruct.pt.x >= winRect.Left) && (hookStruct.pt.x <= winRect.Right);
+                            string processName = GetProcessName(hwnd);
 
-                            if (isInTopArea && isInsideWidth) shouldMove = true;
+                            // ==============================================================
+                            // 修正逻辑：
+                            // 1. 移除了 explorer：让资源管理器走标准判定。
+                            //    - 点标签页 -> 是内容区 -> 不移动 -> 触发关闭标签
+                            //    - 点空白处 -> 是标题栏 -> 移动 -> 触发移动
+                            // 2. 添加 taskmgr (任务管理器)：因为它是 XAML 窗口，经常不认标题栏
+                            // ==============================================================
+                            if (processName == "code" || processName == "taskmgr") 
+                            {
+                                RECT winRect;
+                                GetWindowRect(hwnd, out winRect);
+                                int titleBarHeight = 45; // 允许整个顶部区域
+                                
+                                bool isInTopArea = (hookStruct.pt.y >= winRect.Top) && (hookStruct.pt.y <= winRect.Top + titleBarHeight);
+                                bool isInsideWidth = (hookStruct.pt.x >= winRect.Left) && (hookStruct.pt.x <= winRect.Right);
+
+                                if (isInTopArea && isInsideWidth) shouldMove = true;
+                            }
                         }
 
                         if (shouldMove)
@@ -178,6 +185,23 @@ namespace WindowMover
                 catch { }
             }
             return CallNextHookEx(hookId, nCode, wParam, lParam);
+        }
+
+        private static string GetProcessName(IntPtr hwnd)
+        {
+            try
+            {
+                uint pid;
+                GetWindowThreadProcessId(hwnd, out pid);
+                using (Process p = Process.GetProcessById((int)pid))
+                {
+                    return p.ProcessName.ToLower();
+                }
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         private static void MoveWindowToNextMonitor(IntPtr hwnd)
@@ -228,38 +252,24 @@ namespace WindowMover
             int finalWidth = (width > workWidth) ? workWidth : width;
             int finalHeight = (height > workHeight) ? workHeight : height;
 
-            // 1. 移动窗口 (尝试 Z-Order 置顶)
             SetWindowPos(hwnd, HWND_TOP, newX, newY, finalWidth, finalHeight, SWP_SHOWWINDOW | SWP_NOCOPYBITS | SWP_FRAMECHANGED);
 
-            // 2. Electron/Chrome 抖动修复
             if (!isMaximized)
             {
-                SetWindowPos(hwnd, IntPtr.Zero, 0, 0, finalWidth + 1, finalHeight, 0x0004 /*SWP_NOZORDER*/ | SWP_NOMOVE | SWP_NOCOPYBITS);
-                SetWindowPos(hwnd, IntPtr.Zero, 0, 0, finalWidth, finalHeight, 0x0004 /*SWP_NOZORDER*/ | SWP_NOMOVE | SWP_NOCOPYBITS);
+                SetWindowPos(hwnd, IntPtr.Zero, 0, 0, finalWidth + 1, finalHeight, 0x0004 | SWP_NOMOVE | SWP_NOCOPYBITS);
+                SetWindowPos(hwnd, IntPtr.Zero, 0, 0, finalWidth, finalHeight, 0x0004 | SWP_NOMOVE | SWP_NOCOPYBITS);
             }
             else
             {
                 ShowWindow(hwnd, SW_MAXIMIZE);
             }
 
-            // 3. 强力置顶：必须在所有移动操作完成后调用
             ForceForegroundWindow(hwnd);
         }
 
-        // ==============================================================
-        // 核心修复：强力置顶逻辑 (AttachThreadInput Hack)
-        // ==============================================================
         private static void ForceForegroundWindow(IntPtr hwnd)
         {
-            // 如果窗口被最小化了，先恢复
-            if (IsIconic(hwnd))
-            {
-                ShowWindow(hwnd, SW_RESTORE);
-            }
-            
-            // 仅仅调用 SetForegroundWindow 是不够的
-            // 我们需要把当前线程(工具)的输入处理，连接到目标窗口(VS Code)的线程上
-            // 还要连接到当前真正的前台窗口(Chrome)的线程上
+            if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
             
             uint foreThread = GetWindowThreadProcessId(GetForegroundWindow(), IntPtr.Zero);
             uint appThread = GetCurrentThreadId();
@@ -267,23 +277,16 @@ namespace WindowMover
 
             if (foreThread != targetThread)
             {
-                // 1. 挂靠到当前前台窗口 (Chrome)
                 AttachThreadInput(foreThread, appThread, true);
-                // 2. 挂靠到目标窗口 (VS Code)
                 AttachThreadInput(targetThread, appThread, true);
-                
-                // 3. 尝试所有手段置顶
                 BringWindowToTop(hwnd);
                 ShowWindow(hwnd, SW_SHOW);
                 SetForegroundWindow(hwnd);
-                
-                // 4. 解除挂靠
                 AttachThreadInput(targetThread, appThread, false);
                 AttachThreadInput(foreThread, appThread, false);
             }
             else
             {
-                // 如果目标本来就是前台线程的一部分，直接置顶
                 BringWindowToTop(hwnd);
                 ShowWindow(hwnd, SW_SHOW);
                 SetForegroundWindow(hwnd);
