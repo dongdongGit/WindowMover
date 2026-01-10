@@ -1,0 +1,96 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # 触发条件：推送 v 开头的标签
+  workflow_dispatch:  # 允许手动触发
+
+# 关键修正：赋予 GITHUB_TOKEN 写权限，否则无法创建 Release
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # 解析版本号（放在前面，方便文件名使用）
+      - name: Get version
+        id: get_version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/*") {
+            $version = $env:GITHUB_REF -replace "refs/tags/", ""
+          } else {
+            $version = "latest"
+          }
+          Write-Output "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      # 这里的路径如果是在根目录则不需要改，如果在子目录请改为 ./WindowMover
+      - name: Build project
+        run: dotnet build --configuration Release --no-restore
+
+      # 发布 win-x64
+      - name: Publish win-x64
+        run: |
+          dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o publish/win-x64
+
+      # 发布 win-x86
+      - name: Publish win-x86
+        run: |
+          dotnet publish -c Release -r win-x86 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o publish/win-x86
+
+      # 发布 win-arm64
+      - name: Publish win-arm64
+        run: |
+          dotnet publish -c Release -r win-arm64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -o publish/win-arm64
+
+      # 打包 (优化：文件名带上版本号，且只打包 exe，排除 pdb 调试文件)
+      - name: Create ZIP archives
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.get_version.outputs.version }}"
+          Compress-Archive -Path publish/win-x64/*.exe -DestinationPath "WindowMover-win-x64-$ver.zip"
+          Compress-Archive -Path publish/win-x86/*.exe -DestinationPath "WindowMover-win-x86-$ver.zip"
+          Compress-Archive -Path publish/win-arm64/*.exe -DestinationPath "WindowMover-win-arm64-$ver.zip"
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            WindowMover-win-x64-*.zip
+            WindowMover-win-x86-*.zip
+            WindowMover-win-arm64-*.zip
+          name: Release ${{ steps.get_version.outputs.version }}
+          body: |
+            ## Window Mover ${{ steps.get_version.outputs.version }}
+            
+            ### 下载选择
+            - 💻 **64位系统 (绝大多数电脑)**: 下载 `win-x64`
+            - 🖥️ **32位系统 (老旧电脑)**: 下载 `win-x86`
+            - 📱 **ARM设备 (Surface Pro X 等)**: 下载 `win-arm64`
+            
+            ### 使用方法
+            1. 下载并解压
+            2. 运行 `WindowMover.exe` (无需安装运行时)
+            3. 右键托盘图标可设置开机自启
+            
+            ---
+            *这是自动化构建发布的版本。*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
