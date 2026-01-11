@@ -260,17 +260,76 @@ namespace WindowMover
         private void SetAutoStart(bool enable)
         {
             try {
-                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
+                string executablePath = Application.ExecutablePath;
+                System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStart: enable={enable}, executablePath={executablePath}");
+                
+                // 确保路径使用双引号包围，防止路径中有空格
+                string quotedPath = $"\"{executablePath}\"";
+                System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStart: 引号路径={quotedPath}");
+                
+                // 尝试使用 CurrentUser 注册表
+                bool success = SetAutoStartInRegistry(Registry.CurrentUser, quotedPath, enable);
+                
+                // 如果 CurrentUser 失败，尝试 LocalMachine（需要管理员权限）
+                if (!success)
+                {
+                    System.Diagnostics.Debug.WriteLine("[WindowMover] SetAutoStart: CurrentUser失败，尝试LocalMachine");
+                    try {
+                        success = SetAutoStartInRegistry(Registry.LocalMachine, quotedPath, enable);
+                    } catch (Exception ex) {
+                        System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStart: LocalMachine也需要权限: {ex.Message}");
+                    }
+                }
+                
+                if (!success)
+                {
+                    System.Diagnostics.Debug.WriteLine("[WindowMover] SetAutoStart: 所有方法都失败");
+                    throw new Exception("无法设置开机自启动，可能需要管理员权限");
+                }
+            } catch (Exception ex) {
+                System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStart 最终异常: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStart 异常堆栈: {ex.StackTrace}");
+                
+                // 显示用户友好的错误消息
+                MessageBox.Show($"设置开机自启动失败：{ex.Message}\n\n请尝试以管理员身份运行程序，或手动添加到启动文件夹。",
+                    "设置失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                
+                // 如果设置失败，恢复复选框状态
+                if (!_isLoadingSettings) chkAutoStart.Checked = !enable;
+            }
+        }
+        
+        private bool SetAutoStartInRegistry(RegistryKey rootKey, string quotedPath, bool enable)
+        {
+            try {
+                using (RegistryKey key = rootKey.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
                 {
                     if (key != null)
                     {
-                        if (enable) key.SetValue("WindowMover", Application.ExecutablePath);
-                        else key.DeleteValue("WindowMover", false);
+                        if (enable) {
+                            key.SetValue("WindowMover", quotedPath);
+                            System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStartInRegistry: 成功写入注册表，值={quotedPath}");
+                            
+                            // 验证是否真的写入了
+                            string verifyValue = key.GetValue("WindowMover") as string;
+                            System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStartInRegistry: 验证注册表值={verifyValue}");
+                            return verifyValue == quotedPath;
+                        }
+                        else {
+                            key.DeleteValue("WindowMover", false);
+                            System.Diagnostics.Debug.WriteLine("[WindowMover] SetAutoStartInRegistry: 成功删除注册表项");
+                            return true;
+                        }
+                    }
+                    else
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStartInRegistry: 无法打开{rootKey.Name}注册表键");
+                        return false;
                     }
                 }
-            } catch { 
-                // 如果设置失败，不要触发 SaveSettings 的连锁反应，但因为有 _isLoadingSettings 保护，这里相对安全
-                if (!_isLoadingSettings) chkAutoStart.Checked = !enable; 
+            } catch (Exception ex) {
+                System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStartInRegistry 异常 ({rootKey.Name}): {ex.Message}");
+                return false;
             }
         }
     }
