@@ -64,7 +64,7 @@ dotnet run
 
 ```bash
 # 发布为单文件可执行程序
-dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
+dotnet publish -c Release -r win-x64  --self-contained false -p:PublishSingleFile=true
 
 # 发布后的文件位于：bin/Release/net8.0-windows/win-x64/publish/
 ```
