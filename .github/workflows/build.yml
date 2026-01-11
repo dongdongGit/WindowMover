@@ -34,39 +34,36 @@ jobs:
           Write-Output "version=$version" >> $env:GITHUB_OUTPUT
 
       # === 核心修复：自动寻找 .csproj 文件 ===
+      # 解决 MSB1009 和 MSB1003 错误，无论项目在哪都能找到
       - name: Locate Project File
         id: locate_project
         shell: pwsh
         run: |
-          # 搜索当前目录下所有的 .csproj 文件
           $csproj = Get-ChildItem -Recurse -Filter "*.csproj" | Select-Object -First 1
-          
           if ($null -eq $csproj) { 
-            Write-Error "❌ 致命错误：在仓库中找不到任何 .csproj 项目文件！请检查您是否上传了项目文件。"
+            Write-Error "❌ 致命错误：找不到 .csproj 文件！"
             exit 1 
           }
-          
           echo "PROJECT_PATH=$($csproj.FullName)" >> $env:GITHUB_ENV
           Write-Host "✅ 已找到项目文件: $($csproj.FullName)"
 
-      # 1. 还原 (使用找到的路径)
       - name: Restore dependencies
         run: dotnet restore "${{ env.PROJECT_PATH }}"
 
-      # 2. 发布 win-x64 (轻量版)
-      - name: Publish win-x64
+      # === 编译命令：强制生成小文件 ===
+      # 使用 -p:SelfContained=false 强力覆盖
+      
+      - name: Publish win-x64 (Small)
         run: |
-          dotnet publish "${{ env.PROJECT_PATH }}" -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-x64
+          dotnet publish "${{ env.PROJECT_PATH }}" -c Release -r win-x64 -p:SelfContained=false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-x64
 
-      # 3. 发布 win-x86 (轻量版)
-      - name: Publish win-x86
+      - name: Publish win-x86 (Small)
         run: |
-          dotnet publish "${{ env.PROJECT_PATH }}" -c Release -r win-x86 --self-contained false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-x86
+          dotnet publish "${{ env.PROJECT_PATH }}" -c Release -r win-x86 -p:SelfContained=false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-x86
 
-      # 4. 发布 win-arm64 (轻量版)
-      - name: Publish win-arm64
+      - name: Publish win-arm64 (Small)
         run: |
-          dotnet publish "${{ env.PROJECT_PATH }}" -c Release -r win-arm64 --self-contained false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-arm64
+          dotnet publish "${{ env.PROJECT_PATH }}" -c Release -r win-arm64 -p:SelfContained=false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-arm64
 
       # 打包
       - name: Create ZIP archives
@@ -88,8 +85,21 @@ jobs:
             WindowMover-win-arm64-*.zip
           name: Release ${{ steps.get_version.outputs.version }}
           body: |
-            ## Window Mover ${{ steps.get_version.outputs.version }} (轻量版)
-            **注意：此版本仅 ~360KB，需要安装 .NET 8 Runtime。**
+            ## Window Mover ${{ steps.get_version.outputs.version }}
+            
+            ### 下载选择
+            - 💻 **64位系统 (绝大多数电脑)**: 下载 `win-x64`
+            - 🖥️ **32位系统 (老旧电脑)**: 下载 `win-x86`
+            - 📱 **ARM设备 (Surface Pro X 等)**: 下载 `win-arm64`
+            
+            ### 使用方法
+            1. 下载并解压
+            2. 安装 [.NET 8.0 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) (如已安装可跳过)
+            3. 运行 `WindowMover.exe`
+            3. 右键托盘图标可设置开机自启
+            
+            ---
+            *这是自动化构建发布的版本。*
           draft: false
           prerelease: false
         env:
