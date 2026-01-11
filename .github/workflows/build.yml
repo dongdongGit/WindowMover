@@ -15,10 +15,6 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Clear cache and clean
-        run: |
-          dotnet nuget locals all --clear
-          dotnet clean
 
       - name: Checkout code
         uses: actions/checkout@v4
