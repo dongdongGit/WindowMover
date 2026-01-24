@@ -50,29 +50,40 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore "${{ env.PROJECT_PATH }}"
 
-      # === 编译命令：强制生成小文件 ===
-      # 使用 -p:SelfContained=false 强力覆盖
+      # === 编译命令：生成依赖版和独立版 ===
       
-      - name: Publish win-x64 (Small)
+      - name: Publish All Variants
+        shell: pwsh
         run: |
-          dotnet publish "${{ env.PROJECT_PATH }}" -c Release -r win-x64 -p:SelfContained=false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-x64
-
-      - name: Publish win-x86 (Small)
-        run: |
-          dotnet publish "${{ env.PROJECT_PATH }}" -c Release -r win-x86 -p:SelfContained=false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-x86
-
-      - name: Publish win-arm64 (Small)
-        run: |
-          dotnet publish "${{ env.PROJECT_PATH }}" -c Release -r win-arm64 -p:SelfContained=false -p:PublishSingleFile=true -p:DebugType=None -o publish/win-arm64
+          $archs = "win-x64", "win-x86", "win-arm64"
+          foreach ($arch in $archs) {
+            # 1. Framework Dependent (需要安装 .NET Runtime, 体积小)
+            Write-Host "Publishing $arch Framework Dependent..."
+            dotnet publish "${{ env.PROJECT_PATH }}" -c Release -r $arch -p:SelfContained=false -p:PublishSingleFile=true -p:DebugType=None -o "publish/net8/$arch"
+            
+            # 2. Self Contained (独立运行, 无需安装环境, 体积大)
+            Write-Host "Publishing $arch Self Contained..."
+            dotnet publish "${{ env.PROJECT_PATH }}" -c Release -r $arch -p:SelfContained=true -p:PublishSingleFile=true -p:DebugType=None -o "publish/standalone/$arch"
+          }
 
       # 打包
       - name: Create ZIP archives
         shell: pwsh
         run: |
           $ver = "${{ steps.get_version.outputs.version }}"
-          Compress-Archive -Path publish/win-x64/*.exe -DestinationPath "WindowMover-win-x64-$ver.zip"
-          Compress-Archive -Path publish/win-x86/*.exe -DestinationPath "WindowMover-win-x86-$ver.zip"
-          Compress-Archive -Path publish/win-arm64/*.exe -DestinationPath "WindowMover-win-arm64-$ver.zip"
+          $archs = "win-x64", "win-x86", "win-arm64"
+          
+          foreach ($arch in $archs) {
+            # 打包 Framework Dependent
+            $srcNet8 = "publish/net8/$arch/*"
+            $destNet8 = "WindowMover-$arch-net8-$ver.zip"
+            Compress-Archive -Path $srcNet8 -DestinationPath $destNet8
+            
+            # 打包 Self Contained
+            $srcStandalone = "publish/standalone/$arch/*"
+            $destStandalone = "WindowMover-$arch-standalone-$ver.zip"
+            Compress-Archive -Path $srcStandalone -DestinationPath $destStandalone
+          }
 
       # 发布
       - name: Create Release
@@ -80,26 +91,33 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            WindowMover-win-x64-*.zip
-            WindowMover-win-x86-*.zip
-            WindowMover-win-arm64-*.zip
+            WindowMover-*-net8-*.zip
+            WindowMover-*-standalone-*.zip
           name: Release ${{ steps.get_version.outputs.version }}
           body: |
             ## Window Mover ${{ steps.get_version.outputs.version }}
             
-            ### 下载选择
-            - 💻 **64位系统 (绝大多数电脑)**: 下载 `win-x64`
-            - 🖥️ **32位系统 (老旧电脑)**: 下载 `win-x86`
-            - 📱 **ARM设备 (Surface Pro X 等)**: 下载 `win-arm64`
+            ### 📥 下载选择 (Download Options)
+            
+            #### 1. 独立版 (Standalone) - ✅ 推荐
+            > **无需安装** 任何环境，解压即用。体积较大。
+            - 💻 **64位 (通用)**: 下载 `...-win-x64-standalone-....zip`
+            - 🖥️ **32位**: 下载 `...-win-x86-standalone-....zip`
+            - 📱 **ARM64**: 下载 `...-win-arm64-standalone-....zip`
+            
+            #### 2. 依赖版 (.NET 8 Required) - ⚡ 轻量
+            > **需要安装** [.NET 8.0 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)。体积非常小。
+            - 💻 **64位**: 下载 `...-win-x64-net8-....zip`
+            - 🖥️ **32位**: 下载 `...-win-x86-net8-....zip`
+            - 📱 **ARM64**: 下载 `...-win-arm64-net8-....zip`
             
             ### 使用方法
-            1. 下载并解压
-            2. 安装 [.NET 8.0 Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) (如已安装可跳过)
-            3. 运行 `WindowMover.exe`
+            1. 下载对应版本并解压
+            2. 运行 `WindowMover.exe`
             3. 右键托盘图标可设置开机自启
             
             ---
-            *这是自动化构建发布的版本。*
+            *Automated build*
           draft: false
           prerelease: false
         env:
