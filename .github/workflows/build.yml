@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
 
     steps:
@@ -110,6 +110,10 @@ jobs:
             - 💻 **64位**: 下载 `...-win-x64-net8-....zip`
             - 🖥️ **32位**: 下载 `...-win-x86-net8-....zip`
             - 📱 **ARM64**: 下载 `...-win-arm64-net8-....zip`
+
+            #### 3. macOS (Native)
+            > **原生 Swift 开发**，支持 macOS 10.13+
+            - 🍎 **macOS App**: 下载 `WindowMover-macOS-....zip`
             
             ### 使用方法
             1. 下载对应版本并解压
@@ -120,5 +124,40 @@ jobs:
             *Automated build*
           draft: false
           prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: get_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION="latest"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build macOS App
+        run: |
+          cd WindowMoverMac
+          make
+
+      - name: Create ZIP archive
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          cd WindowMoverMac
+          zip -r ../WindowMover-macOS-$VERSION.zip WindowMover.app
+
+      - name: Upload Release Asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: WindowMover-macOS-*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
