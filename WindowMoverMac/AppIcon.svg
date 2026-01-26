@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" fill="#2563eb" rx="64"/>
+  <g fill="white">
+    <!-- Left arrow -->
+    <path d="M 120 256 L 200 176 L 200 216 L 280 216 L 280 296 L 200 296 L 200 336 Z"/>
+    <!-- Right arrow -->
+    <path d="M 392 256 L 312 176 L 312 216 L 232 216 L 232 296 L 312 296 L 312 336 Z"/>
+  </g>
+  <circle cx="256" cy="256" r="40" fill="none" stroke="white" stroke-width="8"/>
+</svg>

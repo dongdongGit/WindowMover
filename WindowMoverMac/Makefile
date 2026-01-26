@@ -1,5 +1,5 @@
 APP_NAME = WindowMover
-SOURCES = main.swift AppDelegate.swift WindowMover.swift AccessibilityHelper.swift
+SOURCES = main.swift AppDelegate.swift WindowMover.swift AccessibilityHelper.swift LoginItemHelper.swift
 
 all: bundle
 

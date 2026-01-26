@@ -79,18 +79,59 @@ class WindowMover {
             return false
         }
         
-        // 3. Check if click is in title bar area (Top part of the window)
-        // We allow a generous hit area for modern apps (like VS Code) that draw their own title bars
-        let isTitleBar = location.y >= frame.minY && location.y <= (frame.minY + titleBarHeight) &&
-                         location.x >= frame.minX && location.x <= frame.maxX
-        
-        if !isTitleBar {
+        // 3. Check if click is in title bar area and not on a tab
+        if !isInTitleBarButNotTab(at: location, window: windowElement, frame: frame) {
             return false
         }
         
         // 4. Move to next screen
         moveWindowToNextScreen(window: windowElement, currentFrame: frame)
         return true
+    }
+    
+    private func isInTitleBarButNotTab(at location: CGPoint, window: AXUIElement, frame: CGRect) -> Bool {
+        // First check if we're in the general title bar area
+        let isInTitleBarArea = location.y >= frame.minY && location.y <= (frame.minY + titleBarHeight) &&
+                              location.x >= frame.minX && location.x <= frame.maxX
+        
+        if !isInTitleBarArea {
+            return false
+        }
+        
+        // Try to detect if we're clicking on a tab by checking UI elements
+        // This is a heuristic - we check for common tab indicators
+        guard let children = AccessibilityHelper.shared.getChildren(of: window) else {
+            return true // If we can't check children, assume it's title bar
+        }
+        
+        for child in children {
+            if let childFrame = AccessibilityHelper.shared.getElementFrame(child),
+               let role = AccessibilityHelper.shared.getElementRole(child) {
+                
+                // Check if click is within this child element
+                if childFrame.contains(location) {
+                    // Common tab roles and identifiers
+                    if role == "AXTab" || role == "AXTabGroup" || role == "AXRadioButton" {
+                        return false // Click is on a tab element
+                    }
+                    
+                    // Check for tab-like subelements (children with tab characteristics)
+                    if let subChildren = AccessibilityHelper.shared.getChildren(of: child) {
+                        for subChild in subChildren {
+                            if let subFrame = AccessibilityHelper.shared.getElementFrame(subChild),
+                               subFrame.contains(location) {
+                                if let subRole = AccessibilityHelper.shared.getElementRole(subChild),
+                                   subRole == "AXTab" {
+                                    return false
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return true // Not identified as a tab, treat as title bar
     }
     
     private func moveWindowToNextScreen(window: AXUIElement, currentFrame: CGRect) {
@@ -178,8 +219,16 @@ class WindowMover {
         let newOrigin = CGPoint(x: newX, y: newY)
         let newSize = CGSize(width: newWidth, height: newHeight)
         
+        // Store window focus state before moving to preserve Z-order
+        let wasMain = AccessibilityHelper.shared.isWindowMain(window)
+        let wasFocused = AccessibilityHelper.shared.isWindowFocused(window)
+        
         AccessibilityHelper.shared.setWindowPosition(window, to: newOrigin)
         AccessibilityHelper.shared.setWindowSize(window, to: newSize)
-        AccessibilityHelper.shared.raiseWindow(window)
+        
+        // Only restore focus if the window had it before - otherwise maintain Z-order
+        if wasFocused || wasMain {
+            AccessibilityHelper.shared.focusWindow(window)
+        }
     }
 }

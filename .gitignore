@@ -3,3 +3,6 @@ obj/
 .vs/
 .roo/
 *.user
+WindowMoverMac/.build/*
+WindowMoverMac/WindowMover.app/*
+WindowMoverMac/WindowMover
