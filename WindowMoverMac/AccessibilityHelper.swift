@@ -90,4 +90,73 @@ class AccessibilityHelper {
          AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, true as CFTypeRef)
          AXUIElementPerformAction(window, kAXRaiseAction as CFString)
     }
+    
+    func getChildren(of element: AXUIElement) -> [AXUIElement]? {
+        var childrenValue: AnyObject?
+        let result = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue)
+        
+        if result == .success, let childrenArray = childrenValue as? [AXUIElement] {
+            return childrenArray
+        }
+        
+        return nil
+    }
+    
+    func getElementFrame(_ element: AXUIElement) -> CGRect? {
+        var positionValue: AnyObject?
+        var sizeValue: AnyObject?
+        
+        let posResult = AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue)
+        let sizeResult = AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue)
+        
+        if posResult == .success, sizeResult == .success {
+            var point = CGPoint.zero
+            var size = CGSize.zero
+            
+            AXValueGetValue(positionValue as! AXValue, .cgPoint, &point)
+            AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+            
+            return CGRect(origin: point, size: size)
+        }
+        
+        return nil
+    }
+    
+    func getElementRole(_ element: AXUIElement) -> String? {
+        var roleValue: AnyObject?
+        let result = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue)
+        
+        if result == .success, let role = roleValue as? String {
+            return role
+        }
+        
+        return nil
+    }
+    
+    func isWindowMain(_ window: AXUIElement) -> Bool {
+        var isMainValue: AnyObject?
+        let result = AXUIElementCopyAttributeValue(window, kAXMainAttribute as CFString, &isMainValue)
+        
+        if result == .success, let isMain = isMainValue as? Bool {
+            return isMain
+        }
+        
+        return false
+    }
+    
+    func isWindowFocused(_ window: AXUIElement) -> Bool {
+        var isFocusedValue: AnyObject?
+        let result = AXUIElementCopyAttributeValue(window, kAXFocusedAttribute as CFString, &isFocusedValue)
+        
+        if result == .success, let isFocused = isFocusedValue as? Bool {
+            return isFocused
+        }
+        
+        return false
+    }
+    
+    func focusWindow(_ window: AXUIElement) {
+        AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, true as CFTypeRef)
+        AXUIElementSetAttributeValue(window, kAXFocusedAttribute as CFString, true as CFTypeRef)
+    }
 }

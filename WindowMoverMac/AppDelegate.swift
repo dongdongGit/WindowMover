@@ -31,10 +31,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Window Mover is Running", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         
+        // Auto-start toggle
+        let autoStartItem = NSMenuItem(title: "Start at Login", action: #selector(toggleAutoStart(_:)), keyEquivalent: "")
+        autoStartItem.state = LoginItemHelper.shared.isLoginItemEnabled() ? .on : .off
+        menu.addItem(autoStartItem)
+        menu.addItem(NSMenuItem.separator())
+        
         let quitItem = NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
         
         statusItem.menu = menu
+    }
+    
+    @objc func toggleAutoStart(_ sender: NSMenuItem) {
+        let newState = !LoginItemHelper.shared.isLoginItemEnabled()
+        LoginItemHelper.shared.setLoginItemEnabled(newState)
+        sender.state = newState ? .on : .off
     }
     
     func checkPermissions() {
