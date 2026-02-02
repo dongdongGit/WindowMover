@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:WindowMover}/WindowMoverMac",
+            "name": "Debug WindowMover (WindowMoverMac)",
+            "target": "WindowMover",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug WindowMover (WindowMoverMac)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:WindowMover}/WindowMoverMac",
+            "name": "Release WindowMover (WindowMoverMac)",
+            "target": "WindowMover",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release WindowMover (WindowMoverMac)"
+        }
+    ]
+}
