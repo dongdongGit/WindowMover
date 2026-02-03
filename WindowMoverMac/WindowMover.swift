@@ -1,14 +1,12 @@
 import Cocoa
 import CoreGraphics
 
-// Global callback function for the event tap
+// 保持 eventTapCallback 不变
 func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent, refcon: UnsafeMutableRawPointer?) -> Unmanaged<CGEvent>? {
     if type == .otherMouseDown {
-        // Middle Mouse Button Check (Button Number 2)
         let buttonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
         if buttonNumber == 2 {
             if WindowMover.shared.handleMiddleClick(event: event) {
-                // Swallow the event if we moved a window so it doesn't trigger other actions
                 return nil
             }
         }
@@ -18,21 +16,17 @@ func eventTapCallback(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent,
 
 class WindowMover {
     static let shared = WindowMover()
-    
+
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     public var isEnabled = true
-    
-    // Configurable title bar height check (approximate)
     private let titleBarHeight: CGFloat = 40.0
-    
+
     private init() {}
-    
+
     func start() {
-        print("Starting WindowMover...")
-        
+        print("WindowMover: Started")
         let eventMask = (1 << CGEventType.otherMouseDown.rawValue)
-        
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
@@ -41,17 +35,16 @@ class WindowMover {
             callback: eventTapCallback,
             userInfo: nil
         ) else {
-            print("Failed to create event tap. Please ensure Accessibility permissions are granted.")
+            print("Failed to create event tap.")
             return
         }
-        
+
         self.eventTap = tap
         self.runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
-        print("Event tap started.")
     }
-    
+
     func stop() {
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
@@ -61,174 +54,214 @@ class WindowMover {
             eventTap = nil
             runLoopSource = nil
         }
-        print("Event tap stopped.")
     }
-    
+
     func handleMiddleClick(event: CGEvent) -> Bool {
         guard isEnabled else { return false }
-        
         let location = event.location
-        
-        // 1. Get window under mouse
-        guard let windowElement = AccessibilityHelper.shared.getWindowUnderMouse(at: location) else {
+        // guard let element: AXUIElement = AccessibilityHelper.shared.getElementAtPosition(location) else { return false }
+        // print("----- 开始点击诊断 -----")
+        // var current: AXUIElement? = element
+        // for i in 0..<5 {
+        //     guard let e = current else { break }
+        //     var role: CFTypeRef?
+        //     var title: CFTypeRef?
+        //     var desc: CFTypeRef?
+        //     AXUIElementCopyAttributeValue(e, kAXRoleAttribute as CFString, &role)
+        //     AXUIElementCopyAttributeValue(e, kAXTitleAttribute as CFString, &title)
+        //     AXUIElementCopyAttributeValue(e, kAXDescriptionAttribute as CFString, &desc)
+            
+        //     print("层级 \(i): Role=\(role ?? "nil" as CFTypeRef), Title='\(title ?? "" as CFTypeRef)', Desc='\(desc ?? "" as CFTypeRef)'")
+            
+        //     var parent: CFTypeRef?
+        //     AXUIElementCopyAttributeValue(e, kAXParentAttribute as CFString, &parent)
+        //     current = (parent as! AXUIElement)
+        // }
+        // print("----- 诊断结束 -----")
+
+        // [Step 1] 命中测试
+        guard let element = AccessibilityHelper.shared.getElementAtPosition(location) else {
+            // print("❌ Step 1 Fail: 没有获取到任何 UI 元素")
             return false
         }
         
-        // 2. Get Window Frame
-        guard let frame = AccessibilityHelper.shared.getWindowFrame(windowElement) else {
+        let role = AccessibilityHelper.shared.getElementRole(element) ?? "Unknown"
+        // print("ℹ️ Hit Role: \(role)") // 调试用
+
+        // [Step 2] 交互元素判定
+        if isInteractiveTabElement(element) {
+            // print("🚫 Step 2 Block: 判定为交互元素 (Tab/Button)，不移动")
+            return false
+        }
+
+        // [Step 3] 查找窗口 (使用增强版查找逻辑)
+        guard let window = getWindow(from: element) else {
+            // print("❌ Step 3 Fail: 无法找到所属窗口 (Window Object Not Found)")
             return false
         }
         
-        // 3. Check if click is in title bar area and not on a tab
-        if !isInTitleBarButNotTab(at: location, window: windowElement, frame: frame) {
+        // [Step 4] 验证窗口 Frame
+        guard let frame = AccessibilityHelper.shared.getWindowFrame(window) else {
+            // print("❌ Step 4 Fail: 无法获取窗口尺寸")
             return false
         }
-        
-        // 4. Move to next screen
-        moveWindowToNextScreen(window: windowElement, currentFrame: frame)
+
+        // [Step 5] 区域检查
+        // 如果明确点击的是 Chrome 空白条 (AXTabGroup)，则跳过坐标检查，直接移动
+        if role == "AXTabGroup" {
+            // print("✅ Step 5 Pass: 命中 TabGroup，强制移动")
+        } else {
+            if !isInTitleBar(location, frame: frame) {
+                // print("🚫 Step 5 Block: 点击位置不在标题栏区域内 (Y: \(location.y), MinY: \(frame.minY))")
+                return false
+            }
+        }
+
+        // print("🚀 Executing Move...")
+        moveWindowToNextScreen(window: window, frame: frame)
         return true
     }
     
-    private func isInTitleBarButNotTab(at location: CGPoint, window: AXUIElement, frame: CGRect) -> Bool {
-        // First check if we're in the general title bar area
-        let isInTitleBarArea = location.y >= frame.minY && location.y <= (frame.minY + titleBarHeight) &&
-                              location.x >= frame.minX && location.x <= frame.maxX
+    // --- 增强版窗口查找 ---
+    // 优先使用 kAXWindowAttribute 直接获取窗口，比遍历父级更可靠
+    private func getWindow(from element: AXUIElement) -> AXUIElement? {
+        var window: CFTypeRef?
         
-        if !isInTitleBarArea {
-            return false
+        // 尝试方法 A: 直接询问元素的 Window 属性
+        let result = AXUIElementCopyAttributeValue(element, kAXWindowAttribute as CFString, &window)
+        if result == .success, let w = window {
+            // print("✅ Found Window via Attribute")
+            return (w as! AXUIElement)
         }
         
-        // Try to detect if we're clicking on a tab by checking UI elements
-        // This is a heuristic - we check for common tab indicators
-        guard let children = AccessibilityHelper.shared.getChildren(of: window) else {
-            return true // If we can't check children, assume it's title bar
+        // 尝试方法 B: 也是备选，调用 Helper 的遍历方法 (假设 Helper 有这个方法)
+        if let w = AccessibilityHelper.shared.getWindowFromElement(element) {
+            // print("✅ Found Window via Hierarchy Walk")
+            return w
         }
         
-        for child in children {
-            if let childFrame = AccessibilityHelper.shared.getElementFrame(child),
-               let role = AccessibilityHelper.shared.getElementRole(child) {
-                
-                // Check if click is within this child element
-                if childFrame.contains(location) {
-                    // Common tab roles and identifiers
-                    if role == "AXTab" || role == "AXTabGroup" || role == "AXRadioButton" {
-                        return false // Click is on a tab element
-                    }
-                    
-                    // Check for tab-like subelements (children with tab characteristics)
-                    if let subChildren = AccessibilityHelper.shared.getChildren(of: child) {
-                        for subChild in subChildren {
-                            if let subFrame = AccessibilityHelper.shared.getElementFrame(subChild),
-                               subFrame.contains(location) {
-                                if let subRole = AccessibilityHelper.shared.getElementRole(subChild),
-                                   subRole == "AXTab" {
-                                    return false
-                                }
-                            }
-                        }
-                    }
+        return nil
+    }
+
+    private func isInteractiveTabElement(_ startElement: AXUIElement) -> Bool {
+        var currentElement: AXUIElement? = startElement
+        var depth = 0
+        let maxDepth = 10
+
+        while let elem = currentElement, depth < maxDepth {
+            let role = AccessibilityHelper.shared.getElementRole(elem) ?? ""
+            
+            print("Depth: \(depth) | Role: \(role)") // 调试用
+
+            // ----------------------------------------------------------------
+            // 核心判定逻辑 (基于你提供的日志)
+            // ----------------------------------------------------------------
+            
+            if role == "AXTabGroup" {
+                if depth == 1 {
+                    // 情况 1: 鼠标直接点在了 TabGroup 上 (日志中的第一种情况)
+                    // -> 这就是空白区域
+                    // -> 返回 false (表示不是交互元素，允许 WindowMover 移动窗口)
+                    return false
+                } else {
+                    // 情况 2: 鼠标点在了某个子元素上，向上找父级才发现了 TabGroup (日志中的第二种情况)
+                    // -> 说明点在了标签页内部 (即使那个 Group 没有标题)
+                    // -> 返回 true (表示是交互元素，禁止移动)
+                    return true
                 }
             }
+
+            // ----------------------------------------------------------------
+            // 辅助判定 (防止直接点在文字或按钮上)
+            // ----------------------------------------------------------------
+            // 如果直接点到了文字(标题)、图片(图标)、按钮(关闭键)，直接拦截
+            if ["AXStaticText", "AXImage", "AXButton", "AXRadioButton"].contains(role) {
+                return true
+            }
+
+            // ----------------------------------------------------------------
+            // 向上查找
+            // ----------------------------------------------------------------
+            var parent: CFTypeRef?
+            let result = AXUIElementCopyAttributeValue(elem, kAXParentAttribute as CFString, &parent)
+            
+            if result == .success, let p = parent {
+                currentElement = (p as! AXUIElement)
+                depth += 1
+            } else {
+                break
+            }
         }
-        
-        return true // Not identified as a tab, treat as title bar
+
+        // 如果遍历完了都没遇到 TabGroup (比如点在网页内容区)，为了安全起见，不拦截
+        return false
     }
-    
-    private func moveWindowToNextScreen(window: AXUIElement, currentFrame: CGRect) {
+
+    private func isInTitleBar(_ point: CGPoint, frame: CGRect) -> Bool {
+        return point.y >= frame.minY && point.y <= (frame.minY + titleBarHeight) &&
+               point.x >= frame.minX && point.x <= frame.maxX
+    }
+
+    private func moveWindowToNextScreen(window: AXUIElement, frame: CGRect) {
         let screens = NSScreen.screens
-        guard screens.count > 1 else { return }
+        // 如果只有一个屏幕，无法移动
+        guard screens.count > 1 else {
+            print("⚠️ Cancel Move: 只有一个显示器")
+            return
+        }
+
+        let windowCenter = CGPoint(x: frame.midX, y: frame.midY)
+        // 注意：NSScreen 的坐标原点在左下角，而 CGEvent/Accessibility 在左上角，需要统一
+        // 这里假设 AccessibilityHelper 处理好了，或者我们使用 Frame 计算
         
-        // Find current screen based on window center to avoid edge cases
-        let windowCenter = CGPoint(x: currentFrame.midX, y: currentFrame.midY)
-        
-        // Find screen containing the center point
-        // Note: NSScreen coordinates have origin at bottom-left, but CoreGraphics/AX use top-left (usually).
-        // However, NSScreen.frame is in Cocoa coordinates. AX uses Quartz coordinates.
-        // We need to be careful. accessibilityFrame() usually returns Quartz coords (top-left 0,0).
-        // NSScreen 0,0 is bottom-left of primary screen.
-        
-        // Helper to find screen for a Quartz point
-        var currentScreen: NSScreen? = nil
+        // 简单查找当前所在的 Screen (基于 Frame 中心点)
+        var currentScreen: NSScreen?
         for screen in screens {
-            // Convert Quartz point to Cocoa point for hit testing
-            // Quartz y = DisplayHeight - Cocoa y
-            // Actually simpler: just check geometry relative to screen frame in global coords
-            // AX coordinates are global display coordinates (Top-Left origin of main screen).
-            
-            // Let's use direct comparison logic assuming screens are arranged logically
-            // A robust way is to just find which screen frame contains the point.
-            // NSScreen frames are strict. We need to convert point.
-            
-            // Actually, let's use a simpler heuristic: Iterating screens and checking bounds logic match
-            // But since coordinates systems differ (Y-axis flip), we need to flip Y.
-            
+            // 将 Screen 坐标转换为 Quartz 坐标 (左上角原点) 进行比较
             let screenFrame = screen.frame
-            // Flip Y for check. Global height needed? No, just relative to primary screen.
-            // Primary screen is index 0. Its bottom-left is (0,0) in Cocoa.
-            // In Quartz, (0,0) is top-left of primary screen.
-            
-            // Let's rely on standard center-point check
-            // Convert Cocoa Frame to Quartz Frame roughly
+            // NSScreen 的 frame.origin.y 是基于左下角的，需要反转
+            // 但 NSScreen.screens[0].frame.height 是总高度
             let globalHeight = NSScreen.screens[0].frame.height
             let quartzY = globalHeight - (screenFrame.origin.y + screenFrame.height)
-            let quartzFrame = CGRect(x: screenFrame.origin.x, y: quartzY, width: screenFrame.width, height: screenFrame.height)
+            let quartzRect = CGRect(x: screenFrame.origin.x, y: quartzY, width: screenFrame.width, height: screenFrame.height)
             
-            if quartzFrame.contains(windowCenter) {
+            if quartzRect.contains(windowCenter) {
                 currentScreen = screen
                 break
             }
         }
-        
-        // Fallback to first screen if not found
-        guard let startScreen = currentScreen ?? screens.first else { return }
-        guard let currentIndex = screens.firstIndex(of: startScreen) else { return }
-        
+
+        guard let startScreen = currentScreen ?? screens.first,
+              let currentIndex = screens.firstIndex(of: startScreen) else {
+            print("⚠️ Cancel Move: 无法确定当前屏幕")
+            return
+        }
+
         let nextIndex = (currentIndex + 1) % screens.count
         let nextScreen = screens[nextIndex]
+
+        print("📺 Moving from Screen \(currentIndex) to Screen \(nextIndex)")
         
-        // Logic: Calculate relative position (0.0 - 1.0) on current screen
-        // We need Quartz frames for calculation
+        // 计算坐标转换
         let globalHeight = NSScreen.screens[0].frame.height
         
-        let currentQuartzY = globalHeight - (startScreen.visibleFrame.origin.y + startScreen.visibleFrame.height)
-        let currentQuartzRect = CGRect(x: startScreen.visibleFrame.origin.x, y: currentQuartzY, width: startScreen.visibleFrame.width, height: startScreen.visibleFrame.height)
+        let startQuartzY = globalHeight - (startScreen.visibleFrame.origin.y + startScreen.visibleFrame.height)
+        let startRect = CGRect(x: startScreen.visibleFrame.origin.x, y: startQuartzY, width: startScreen.visibleFrame.width, height: startScreen.visibleFrame.height)
         
         let nextQuartzY = globalHeight - (nextScreen.visibleFrame.origin.y + nextScreen.visibleFrame.height)
-        let nextQuartzRect = CGRect(x: nextScreen.visibleFrame.origin.x, y: nextQuartzY, width: nextScreen.visibleFrame.width, height: nextScreen.visibleFrame.height)
+        let nextRect = CGRect(x: nextScreen.visibleFrame.origin.x, y: nextQuartzY, width: nextScreen.visibleFrame.width, height: nextScreen.visibleFrame.height)
+
+        let xRatio = (frame.minX - startRect.minX) / startRect.width
+        let yRatio = (frame.minY - startRect.minY) / startRect.height
+
+        var newX = nextRect.minX + (nextRect.width * xRatio)
+        var newY = nextRect.minY + (nextRect.height * yRatio)
         
-        let xRatio = (currentFrame.minX - currentQuartzRect.minX) / currentQuartzRect.width
-        let yRatio = (currentFrame.minY - currentQuartzRect.minY) / currentQuartzRect.height
-        
-        // Calculate new position
-        var newX = nextQuartzRect.minX + (nextQuartzRect.width * xRatio)
-        var newY = nextQuartzRect.minY + (nextQuartzRect.height * yRatio)
-        
-        // Resize if needed (if next screen is smaller)
-        let newWidth = min(currentFrame.width, nextQuartzRect.width)
-        let newHeight = min(currentFrame.height, nextQuartzRect.height)
-        
-        // Clamp to bounds to ensure window is visible
-        if newX + newWidth > nextQuartzRect.maxX {
-            newX = nextQuartzRect.maxX - newWidth
-        }
-        if newY + newHeight > nextQuartzRect.maxY {
-            newY = nextQuartzRect.maxY - newHeight
-        }
-        
-        // Apply
-        let newOrigin = CGPoint(x: newX, y: newY)
-        let newSize = CGSize(width: newWidth, height: newHeight)
-        
-        // Store window focus state before moving to preserve Z-order
-        let wasMain = AccessibilityHelper.shared.isWindowMain(window)
-        let wasFocused = AccessibilityHelper.shared.isWindowFocused(window)
-        
-        AccessibilityHelper.shared.setWindowPosition(window, to: newOrigin)
-        AccessibilityHelper.shared.setWindowSize(window, to: newSize)
-        
-        // Only restore focus if the window had it before - otherwise maintain Z-order
-        if wasFocused || wasMain {
-            AccessibilityHelper.shared.focusWindow(window)
-        }
+        // 边界保护
+        if newX + frame.width > nextRect.maxX { newX = nextRect.maxX - frame.width }
+        if newY + frame.height > nextRect.maxY { newY = nextRect.maxY - frame.height }
+
+        AccessibilityHelper.shared.setWindowPosition(window, to: CGPoint(x: newX, y: newY))
+        AccessibilityHelper.shared.activateWindow(window) // 激活窗口
     }
 }
