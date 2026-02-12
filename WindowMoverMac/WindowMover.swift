@@ -147,6 +147,7 @@ class WindowMover {
         var currentElement: AXUIElement? = startElement
         var depth = 0
         let maxDepth = 10
+        var foundInteractiveRole = false
 
         while let elem = currentElement, depth < maxDepth {
             let role = AccessibilityHelper.shared.getElementRole(elem) ?? ""
@@ -154,29 +155,32 @@ class WindowMover {
             print("Depth: \(depth) | Role: \(role)") // 调试用
 
             // ----------------------------------------------------------------
-            // 核心判定逻辑 (基于你提供的日志)
+            // 1. 如果在 AXTabGroup 内 → 使用深度判定
             // ----------------------------------------------------------------
-            
             if role == "AXTabGroup" {
                 if depth == 1 {
-                    // 情况 1: 鼠标直接点在了 TabGroup 上 (日志中的第一种情况)
-                    // -> 这就是空白区域
-                    // -> 返回 false (表示不是交互元素，允许 WindowMover 移动窗口)
+                    // 直接点在 TabGroup 空白区域 → 允许移动
                     return false
                 } else {
-                    // 情况 2: 鼠标点在了某个子元素上，向上找父级才发现了 TabGroup (日志中的第二种情况)
-                    // -> 说明点在了标签页内部 (即使那个 Group 没有标题)
-                    // -> 返回 true (表示是交互元素，禁止移动)
+                    // 子元素在 TabGroup 内 → 是标签页交互元素，阻止移动
                     return true
                 }
             }
 
             // ----------------------------------------------------------------
-            // 辅助判定 (防止直接点在文字或按钮上)
+            // 2. 如果在 AXToolbar 内 → 是工具栏按钮（如 Proxifier），允许移动
             // ----------------------------------------------------------------
-            // 如果直接点到了文字(标题)、图片(图标)、按钮(关闭键)，直接拦截
+            if role == "AXToolbar" {
+                print("Found AXToolbar at depth \(depth), allowing move")
+                return false
+            }
+
+            // ----------------------------------------------------------------
+            // 3. 记录是否遇到过交互元素（按钮/文字/图片等）
+            //    不立即拦截，继续向上查找是否在 AXToolbar 或 AXTabGroup 内
+            // ----------------------------------------------------------------
             if ["AXStaticText", "AXImage", "AXButton", "AXRadioButton"].contains(role) {
-                return true
+                foundInteractiveRole = true
             }
 
             // ----------------------------------------------------------------
@@ -193,8 +197,10 @@ class WindowMover {
             }
         }
 
-        // 如果遍历完了都没遇到 TabGroup (比如点在网页内容区)，为了安全起见，不拦截
-        return false
+        // 没有找到 AXTabGroup 或 AXToolbar：
+        // - 如果遇到过交互元素 → 保守拦截（可能是 Apifox 等应用的标签页）
+        // - 如果没有遇到交互元素 → 允许移动
+        return foundInteractiveRole
     }
 
     private func isInTitleBar(_ point: CGPoint, frame: CGRect) -> Bool {
