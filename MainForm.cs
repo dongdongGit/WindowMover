@@ -12,6 +12,7 @@ namespace WindowMover
         private CheckBox chkAutoStart;       
         private CheckBox chkStartMinimized;
         private CheckBox chkRunAsAdmin;
+        private CheckBox chkAutoUpdate;
         private NotifyIcon notifyIcon;
         private ContextMenuStrip contextMenu;
         private Icon appIcon;
@@ -33,12 +34,18 @@ namespace WindowMover
             this.appIcon = icon;
             InitializeComponents();
             LoadSettings(); // 加载设置
+            
+            // 启动时自动检查更新
+            if (chkAutoUpdate.Checked)
+            {
+                CheckForUpdateAsync(silent: true);
+            }
         }
 
         private void InitializeComponents()
         {
             this.Text = "Window Mover";
-            this.Size = new Size(400, 320); 
+            this.Size = new Size(400, 360); 
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormBorderStyle = FormBorderStyle.FixedSingle;
             this.MaximizeBox = false;
@@ -161,10 +168,29 @@ namespace WindowMover
                 }
             };
 
+            // 5. 启动时自动检查更新
+            chkAutoUpdate = new CheckBox
+            {
+                Text = "启动时自动检查更新",
+                Height = 30,
+                Width = 320,
+                Font = MainFont,
+                ForeColor = TextColor,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 5)
+            };
+            chkAutoUpdate.CheckedChanged += (s, e) => {
+                if (!_isLoadingSettings)
+                {
+                    SaveSettings();
+                }
+            };
+
             contentPanel.Controls.Add(chkDisableHook);      
             contentPanel.Controls.Add(chkAutoStart);        
             contentPanel.Controls.Add(chkStartMinimized);
             contentPanel.Controls.Add(chkRunAsAdmin);
+            contentPanel.Controls.Add(chkAutoUpdate);
             
             this.Controls.Add(contentPanel);
             contentPanel.BringToFront(); 
@@ -215,6 +241,7 @@ namespace WindowMover
             contextMenu.Renderer = new ModernToolStripRenderer(PrimaryColor, TextColor);
             
             contextMenu.Items.Add("显示主界面", null, (s, e) => ShowWindow());
+            contextMenu.Items.Add("检查更新", null, (s, e) => CheckForUpdateAsync(silent: false));
             contextMenu.Items.Add(new ToolStripSeparator());
             contextMenu.Items.Add("退出程序", null, (s, e) => ExitApplication());
             notifyIcon.ContextMenuStrip = contextMenu;
@@ -251,6 +278,7 @@ namespace WindowMover
                         chkAutoStart.Checked = Convert.ToBoolean(key.GetValue("AutoStart", false));
                         chkStartMinimized.Checked = Convert.ToBoolean(key.GetValue("StartMinimized", false));
                         chkRunAsAdmin.Checked = Convert.ToBoolean(key.GetValue("RunAsAdmin", false));
+                        chkAutoUpdate.Checked = Convert.ToBoolean(key.GetValue("AutoCheckUpdate", true));
                         
                         // 应用钩子状态
                         Program.SetHookEnabled(!chkDisableHook.Checked);
@@ -277,6 +305,7 @@ namespace WindowMover
                     key.SetValue("AutoStart", chkAutoStart.Checked);
                     key.SetValue("StartMinimized", chkStartMinimized.Checked);
                     key.SetValue("RunAsAdmin", chkRunAsAdmin.Checked);
+                    key.SetValue("AutoCheckUpdate", chkAutoUpdate.Checked);
                 }
             }
         }
@@ -416,6 +445,12 @@ namespace WindowMover
             {
                 SetAutoStart(true);
             }
+        }
+
+        private async void CheckForUpdateAsync(bool silent)
+        {
+            var result = await UpdateChecker.CheckForUpdateAsync();
+            UpdateChecker.ShowUpdateResult(result, silent, this);
         }
     }
 
