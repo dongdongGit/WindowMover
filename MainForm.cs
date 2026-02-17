@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -9,7 +10,8 @@ namespace WindowMover
     {
         private CheckBox chkDisableHook;     
         private CheckBox chkAutoStart;       
-        private CheckBox chkStartMinimized;  
+        private CheckBox chkStartMinimized;
+        private CheckBox chkRunAsAdmin;
         private NotifyIcon notifyIcon;
         private ContextMenuStrip contextMenu;
         private Icon appIcon;
@@ -36,7 +38,7 @@ namespace WindowMover
         private void InitializeComponents()
         {
             this.Text = "Window Mover";
-            this.Size = new Size(400, 280); 
+            this.Size = new Size(400, 320); 
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormBorderStyle = FormBorderStyle.FixedSingle;
             this.MaximizeBox = false;
@@ -140,9 +142,29 @@ namespace WindowMover
                 }
             };
 
+            // 4. 以管理员身份启动
+            chkRunAsAdmin = new CheckBox
+            {
+                Text = "以管理员身份启动",
+                Height = 30,
+                Width = 320,
+                Font = MainFont,
+                ForeColor = TextColor,
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 0, 0, 5)
+            };
+            chkRunAsAdmin.CheckedChanged += (s, e) => {
+                if (!_isLoadingSettings)
+                {
+                    SaveSettings();
+                    HandleRunAsAdminChanged(chkRunAsAdmin.Checked);
+                }
+            };
+
             contentPanel.Controls.Add(chkDisableHook);      
             contentPanel.Controls.Add(chkAutoStart);        
-            contentPanel.Controls.Add(chkStartMinimized);   
+            contentPanel.Controls.Add(chkStartMinimized);
+            contentPanel.Controls.Add(chkRunAsAdmin);
             
             this.Controls.Add(contentPanel);
             contentPanel.BringToFront(); 
@@ -228,6 +250,7 @@ namespace WindowMover
                         chkDisableHook.Checked = Convert.ToBoolean(key.GetValue("DisableHook", false)); 
                         chkAutoStart.Checked = Convert.ToBoolean(key.GetValue("AutoStart", false));
                         chkStartMinimized.Checked = Convert.ToBoolean(key.GetValue("StartMinimized", false));
+                        chkRunAsAdmin.Checked = Convert.ToBoolean(key.GetValue("RunAsAdmin", false));
                         
                         // 应用钩子状态
                         Program.SetHookEnabled(!chkDisableHook.Checked);
@@ -253,83 +276,145 @@ namespace WindowMover
                     key.SetValue("DisableHook", chkDisableHook.Checked);
                     key.SetValue("AutoStart", chkAutoStart.Checked);
                     key.SetValue("StartMinimized", chkStartMinimized.Checked);
+                    key.SetValue("RunAsAdmin", chkRunAsAdmin.Checked);
                 }
             }
         }
 
         private void SetAutoStart(bool enable)
         {
-            try {
-                string executablePath = Application.ExecutablePath;
-                System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStart: enable={enable}, executablePath={executablePath}");
-                
-                // 确保路径使用双引号包围，防止路径中有空格
-                string quotedPath = $"\"{executablePath}\"";
-                System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStart: 引号路径={quotedPath}");
-                
-                // 尝试使用 CurrentUser 注册表
-                bool success = SetAutoStartInRegistry(Registry.CurrentUser, quotedPath, enable);
-                
-                // 如果 CurrentUser 失败，尝试 LocalMachine（需要管理员权限）
-                if (!success)
+            try
+            {
+                string taskName = "WindowMover_AutoStart";
+                string exePath = Application.ExecutablePath;
+                bool useAdmin = chkRunAsAdmin.Checked;
+                string runLevel = useAdmin ? "HIGHEST" : "LIMITED";
+
+                Debug.WriteLine($"[WindowMover] SetAutoStart: enable={enable}, runLevel={runLevel}, exePath={exePath}");
+
+                if (enable)
                 {
-                    System.Diagnostics.Debug.WriteLine("[WindowMover] SetAutoStart: CurrentUser失败，尝试LocalMachine");
-                    try {
-                        success = SetAutoStartInRegistry(Registry.LocalMachine, quotedPath, enable);
-                    } catch (Exception ex) {
-                        System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStart: LocalMachine也需要权限: {ex.Message}");
+                    // 使用 schtasks 创建登录触发的计划任务
+                    string args = $"/Create /TN \"{taskName}\" /TR \"\\\"{exePath}\\\"\" /SC ONLOGON /RL {runLevel} /F";
+                    int exitCode = RunSchtasks(args);
+
+                    if (exitCode != 0)
+                    {
+                        throw new Exception($"schtasks 创建任务失败，退出码: {exitCode}");
                     }
+                    Debug.WriteLine("[WindowMover] SetAutoStart: 计划任务创建成功");
                 }
-                
-                if (!success)
+                else
                 {
-                    System.Diagnostics.Debug.WriteLine("[WindowMover] SetAutoStart: 所有方法都失败");
-                    throw new Exception("无法设置开机自启动，可能需要管理员权限");
+                    // 删除计划任务
+                    string args = $"/Delete /TN \"{taskName}\" /F";
+                    RunSchtasks(args);
+                    Debug.WriteLine("[WindowMover] SetAutoStart: 计划任务已删除");
                 }
-            } catch (Exception ex) {
-                System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStart 最终异常: {ex.Message}");
-                System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStart 异常堆栈: {ex.StackTrace}");
-                
-                // 显示用户友好的错误消息
-                MessageBox.Show($"设置开机自启动失败：{ex.Message}\n\n请尝试以管理员身份运行程序，或手动添加到启动文件夹。",
+
+                // 清理旧的注册表启动项
+                CleanupRegistryAutoStart();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[WindowMover] SetAutoStart 异常: {ex.Message}");
+                MessageBox.Show($"设置开机自启动失败：{ex.Message}",
                     "设置失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                
-                // 如果设置失败，恢复复选框状态
+
                 if (!_isLoadingSettings) chkAutoStart.Checked = !enable;
             }
         }
-        
-        private bool SetAutoStartInRegistry(RegistryKey rootKey, string quotedPath, bool enable)
+
+        private int RunSchtasks(string arguments)
         {
-            try {
-                using (RegistryKey key = rootKey.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
+            var psi = new ProcessStartInfo("schtasks.exe", arguments)
+            {
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            using (var process = Process.Start(psi))
+            {
+                process.WaitForExit(10000);
+                string stdout = process.StandardOutput.ReadToEnd();
+                string stderr = process.StandardError.ReadToEnd();
+                Debug.WriteLine($"[WindowMover] schtasks stdout: {stdout}");
+                Debug.WriteLine($"[WindowMover] schtasks stderr: {stderr}");
+                return process.ExitCode;
+            }
+        }
+
+        private void CleanupRegistryAutoStart()
+        {
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
                 {
                     if (key != null)
                     {
-                        if (enable) {
-                            key.SetValue("WindowMover", quotedPath);
-                            System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStartInRegistry: 成功写入注册表，值={quotedPath}");
-                            
-                            // 验证是否真的写入了
-                            string verifyValue = key.GetValue("WindowMover") as string;
-                            System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStartInRegistry: 验证注册表值={verifyValue}");
-                            return verifyValue == quotedPath;
-                        }
-                        else {
-                            key.DeleteValue("WindowMover", false);
-                            System.Diagnostics.Debug.WriteLine("[WindowMover] SetAutoStartInRegistry: 成功删除注册表项");
-                            return true;
-                        }
-                    }
-                    else
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStartInRegistry: 无法打开{rootKey.Name}注册表键");
-                        return false;
+                        key.DeleteValue("WindowMover", false);
                     }
                 }
-            } catch (Exception ex) {
-                System.Diagnostics.Debug.WriteLine($"[WindowMover] SetAutoStartInRegistry 异常 ({rootKey.Name}): {ex.Message}");
-                return false;
+                using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true))
+                {
+                    if (key != null)
+                    {
+                        key.DeleteValue("WindowMover", false);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private void HandleRunAsAdminChanged(bool enableAdmin)
+        {
+            if (enableAdmin && !Program.IsRunAsAdmin())
+            {
+                // 需要提升权限：以管理员身份重启
+                try
+                {
+                    var psi = new ProcessStartInfo(Application.ExecutablePath)
+                    {
+                        UseShellExecute = true,
+                        Verb = "runas"
+                    };
+                    Process.Start(psi);
+                    // 退出当前实例
+                    notifyIcon.Visible = false;
+                    Program.SetHookEnabled(false);
+                    Environment.Exit(0);
+                }
+                catch (System.ComponentModel.Win32Exception)
+                {
+                    // 用户取消了 UAC 提示
+                    _isLoadingSettings = true;
+                    chkRunAsAdmin.Checked = false;
+                    _isLoadingSettings = false;
+                    SaveSettings();
+                }
+            }
+            else if (!enableAdmin && Program.IsRunAsAdmin())
+            {
+                // 取消管理员模式：以普通权限重启
+                try
+                {
+                    var psi = new ProcessStartInfo(Application.ExecutablePath)
+                    {
+                        UseShellExecute = true
+                    };
+                    Process.Start(psi);
+                    notifyIcon.Visible = false;
+                    Program.SetHookEnabled(false);
+                    Environment.Exit(0);
+                }
+                catch { }
+            }
+
+            // 如果已经启用了自启动，重新创建任务以更新权限级别
+            if (chkAutoStart.Checked)
+            {
+                SetAutoStart(true);
             }
         }
     }

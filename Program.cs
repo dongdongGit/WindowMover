@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Collections.Generic;
+using System.Security.Principal;
 using System.Threading;
 using System.Windows.Forms;
 using System.Drawing;
@@ -359,6 +360,15 @@ namespace WindowMover
                 BringWindowToTop(hwnd);
                 ShowWindow(hwnd, SW_SHOW);
                 SetForegroundWindow(hwnd);
+            }
+        }
+
+        public static bool IsRunAsAdmin()
+        {
+            using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
+            {
+                WindowsPrincipal principal = new WindowsPrincipal(identity);
+                return principal.IsInRole(WindowsBuiltInRole.Administrator);
             }
         }
     }
