@@ -6,12 +6,12 @@ description: CI/CD workflows, build commands, and release procedures for Windows
 # Build & Release Guide
 
 ## Windows Build
-- **Run**: `dotnet run --project WindowMover.csproj`
+- **Run**: `cd WindowMoverWin && dotnet run`
 - **Publish (Release)**:
   ```bash
-  dotnet publish -c Release -r win-x64 -p:PublishSingleFile=true --self-contained false
+  cd WindowMoverWin && dotnet publish -c Release -r win-x64 -p:PublishSingleFile=true --self-contained false
   ```
-- **Output**: `bin/Release/net8.0-windows/win-x64/publish/WindowMover.exe`
+- **Output**: `WindowMoverWin/bin/Release/net8.0-windows/win-x64/publish/WindowMover.exe`
 
 ## macOS Build
 - **Run**: `cd WindowMoverMac && make run`

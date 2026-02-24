@@ -4,12 +4,12 @@ This repository contains the WindowMover application with separate implementatio
 
 ## Project Structure
 
-### Windows (Root)
+### Windows (/WindowMoverWin)
 - **Framework**: .NET 8.0 (Windows Forms)
 - **Files**:
-  - `WindowMover.csproj`: SDK-style project file
-  - `MainForm.cs`: UI logic (Settings, Tray Icon)
-  - `Program.cs`: Core logic (Low-level Mouse Hook `WH_MOUSE_LL`, P/Invoke definitions)
+  - `WindowMoverWin/WindowMover.csproj`: SDK-style project file
+  - `WindowMoverWin/MainForm.cs`: UI logic (Settings, Tray Icon)
+  - `WindowMoverWin/Program.cs`: Core logic (Low-level Mouse Hook `WH_MOUSE_LL`, P/Invoke definitions)
 
 ### macOS (/WindowMoverMac)
 - **Framework**: Native Swift (Cocoa, CoreGraphics, Accessibility API)
@@ -22,10 +22,10 @@ This repository contains the WindowMover application with separate implementatio
 ## Build & Run
 
 ### Windows
-Run these commands from the repository root:
-- **Build**: `dotnet build WindowMover.csproj`
-- **Run**: `dotnet run --project WindowMover.csproj`
-- **Publish**: `dotnet publish -c Release -r win-x64 -p:PublishSingleFile=true --self-contained false`
+Run these commands from the `WindowMoverWin` directory:
+- **Build**: `cd WindowMoverWin && dotnet build`
+- **Run**: `cd WindowMoverWin && dotnet run`
+- **Publish**: `cd WindowMoverWin && dotnet publish -c Release -r win-x64 -p:PublishSingleFile=true --self-contained false`
 
 ### macOS
 Run these commands from the `WindowMoverMac` directory:
@@ -57,8 +57,8 @@ Run these commands from the `WindowMoverMac` directory:
   - Parameters/Locals: `camelCase`
   - Private Fields: `camelCase` (or `_camelCase`)
 - **Specifics**: 
-  - Heavy use of `P/Invoke` (`user32.dll`) located in `Program.cs`.
-  - UI code is manually written in `MainForm.cs` (not designer-generated).
+  - Heavy use of `P/Invoke` (`user32.dll`) located in `WindowMoverWin/Program.cs`.
+  - UI code is manually written in `WindowMoverWin/MainForm.cs` (not designer-generated).
 
 ### Swift (macOS)
 - **Indentation**: 4 spaces
