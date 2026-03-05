@@ -54,7 +54,7 @@
 
 ```bash
 # 克隆仓库
-git clone git@github.com:dongdongGit/WindowMover.git
+git clone git@github.com:EcoRoundDev/WindowMover.git
 cd WindowMover
 
 # 构建项目

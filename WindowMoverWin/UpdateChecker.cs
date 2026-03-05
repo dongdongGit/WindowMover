@@ -26,8 +26,8 @@ namespace WindowMover
 
     public static class UpdateChecker
     {
-        private const string GitHubApiUrl = "https://api.github.com/repos/dongdongGit/WindowMover/releases/latest";
-        private const string ReleasesPageUrl = "https://github.com/dongdongGit/WindowMover/releases/latest";
+        private const string GitHubApiUrl = "https://api.github.com/repos/EcoRoundDev/WindowMover/releases/latest";
+        private const string ReleasesPageUrl = "https://github.com/EcoRoundDev/WindowMover/releases/latest";
 
         private static readonly HttpClient httpClient = new HttpClient();
 
